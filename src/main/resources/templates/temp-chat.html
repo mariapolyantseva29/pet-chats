@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pet chat</title>
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+</head>
+<body class="bg-light">
+    <div class="container mt-5" style="max-width: 600px;">
+        <h2 class="mb-3">Чат ^-^</h2>
+
+        <div class="alert alert-secondary py-2">
+            Чат ID: <strong id="display-chat-id" th:text="${chatId}">1</strong> |
+            Мой User ID: <strong id="display-user-id" th:text="${userId}">1</strong>
+        </div>
+
+        <div class="card mb-3">
+            <div id="chat-box" class="card-body" style="height: 400px; overflow-y: auto; background-color: #ffffff;">
+                <p class="text-muted text-center mt-5">Загрузка сообщений...</p>
+            </div>
+        </div>
+
+        <div class="input-group mb-3">
+            <input type="text" id="message-input" class="form-control" placeholder="Введите сообщение..." disabled>
+            <button id="send-btn" class="btn btn-primary" type="button" onclick="sendMessage()" disabled>Отправить</button>
+        </div>
+    </div>
+
+    <script th:inline="javascript">
+        const chatId = /*[[${chatId}]]*/ 1;
+        const currentUserId = /*[[${userId}]]*/ 1;
+
+        let stompClient = null;
+
+        function connectWebSocket() {
+            const socket = new SockJS('/ws-chat');
+            stompClient = Stomp.over(socket);
+
+            stompClient.connect({}, function (frame) {
+                document.getElementById('message-input').disabled = false;
+                document.getElementById('send-btn').disabled = false;
+
+                stompClient.subscribe('/topic/chat/' + chatId, function (messageOutput) {
+                    const message = JSON.parse(messageOutput.body);
+                    appendMessage(message);
+                });
+            }, function (error) {
+                setTimeout(connectWebSocket, 3000);
+            });
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('message-input');
+            const content = input.value.trim();
+
+            if (!content || !stompClient) return;
+
+            stompClient.send("/app/chat.send", {}, JSON.stringify({
+                chatId: parseInt(chatId),
+                senderId: parseInt(currentUserId),
+                content: content
+            }));
+
+            input.value = '';
+        }
+
+        function loadChatHistory() {
+            fetch(`/api/chats/${chatId}/messages`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Не удалось загрузить историю сообщений');
+                    }
+                    return response.json();
+                })
+                .then(messages => {
+                    const chatBox = document.getElementById('chat-box');
+                    chatBox.innerHTML = '';
+
+                    if (messages.length === 0) {
+                        chatBox.innerHTML = '<p class="text-muted text-center mt-5">В этом чате пока нет сообщений.</p>';
+                        return;
+                    }
+                    messages.forEach(message => {
+                        appendMessage(message);
+                    });
+                })
+                .catch(error => {
+                    console.error('Ошибка:', error);
+                    document.getElementById('chat-box').innerHTML = '<p class="text-danger text-center mt-5">Ошибка загрузки чата</p>';
+                });
+        }
+
+        function appendMessage(message) {
+            const chatBox = document.getElementById('chat-box');
+
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('p-2', 'mb-2', 'border', 'rounded', 'bg-white');
+
+            const isMyMessage = message.senderId === currentUserId;
+            if (isMyMessage) {
+                messageDiv.style.borderColor = '#0d6efd';
+            }
+
+            const time = new Date(message.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            messageDiv.innerHTML = `
+                <div class="d flex justify-content-between text-muted" style="font-size: 0.85rem;">
+                    <strong>${message.senderUsername || ('User #' + message.senderId)}</strong>
+                    <span>${time}</span>
+                </div>
+                <div class="mt-1">${escapeHtml(message.content)}</div>
+            `;
+
+            chatBox.appendChild(messageDiv);
+
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039' };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+
+        loadChatHistory();
+        connectWebSocket();
+    </script>
+</body>
+</html>
